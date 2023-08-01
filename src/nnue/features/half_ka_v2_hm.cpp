@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2022 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2023 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -48,7 +48,7 @@ namespace Stockfish::Eval::NNUE::Features {
   // Explicit template instantiations
   template void HalfKAv2_hm::append_active_indices<WHITE>(const Position& pos, IndexList& active);
   template void HalfKAv2_hm::append_active_indices<BLACK>(const Position& pos, IndexList& active);
-  
+
   // append_changed_indices() : get a list of indices for recently changed features
   template<Color Perspective>
   void HalfKAv2_hm::append_changed_indices(

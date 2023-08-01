@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2022 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2023 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <sstream>
 #include <string>
 
+#include "benchmark.h"
 #include "evaluate.h"
 #include "movegen.h"
 #include "position.h"
@@ -31,12 +32,11 @@
 #include "tt.h"
 #include "uci.h"
 #include "syzygy/tbprobe.h"
+#include "nnue/evaluate_nnue.h"
 
 using namespace std;
 
 namespace Stockfish {
-
-extern vector<string> setup_bench(const Position&, istream&);
 
 namespace {
 
@@ -161,7 +161,7 @@ namespace {
     uint64_t num, nodes = 0, cnt = 1;
 
     vector<string> list = setup_bench(pos, args);
-    num = count_if(list.begin(), list.end(), [](string s) { return s.find("go ") == 0 || s.find("eval") == 0; });
+    num = count_if(list.begin(), list.end(), [](const string& s) { return s.find("go ") == 0 || s.find("eval") == 0; });
 
     TimePoint elapsed = now();
 
@@ -207,13 +207,17 @@ namespace {
      // The coefficients of a third-order polynomial fit is based on the fishtest data
      // for two parameters that need to transform eval to the argument of a logistic
      // function.
-     double as[] = { 0.50379905,  -4.12755858,  18.95487051, 152.00733652};
-     double bs[] = {-1.71790378,  10.71543602, -17.05515898,  41.15680404};
+     constexpr double as[] = {   0.38036525,   -2.82015070,   23.17882135,  307.36768407};
+     constexpr double bs[] = {  -2.29434733,   13.27689788,  -14.26828904,   63.45318330 };
+
+     // Enforce that NormalizeToPawnValue corresponds to a 50% win rate at ply 64
+     static_assert(UCI::NormalizeToPawnValue == int(as[0] + as[1] + as[2] + as[3]));
+
      double a = (((as[0] * m + as[1]) * m + as[2]) * m) + as[3];
      double b = (((bs[0] * m + bs[1]) * m + bs[2]) * m) + bs[3];
 
      // Transform the eval to centipawns with limited range
-     double x = std::clamp(double(100 * v) / PawnValueEg, -2000.0, 2000.0);
+     double x = std::clamp(double(v), -4000.0, 4000.0);
 
      // Return the win rate in per mille units rounded to the nearest value
      return int(0.5 + 1000 / (1 + std::exp((a - x) / b)));
@@ -299,6 +303,13 @@ void UCI::loop(int argc, char* argv[]) {
 }
 
 
+/// Turns a Value to an integer centipawn number,
+/// without treatment of mate and similar special scores.
+int UCI::to_cp(Value v) {
+
+  return 100 * v / UCI::NormalizeToPawnValue;
+}
+
 /// UCI::value() converts a Value to a string by adhering to the UCI protocol specification:
 ///
 /// cp <x>    The score from the engine's point of view in centipawns.
@@ -311,8 +322,13 @@ string UCI::value(Value v) {
 
   stringstream ss;
 
-  if (abs(v) < VALUE_MATE_IN_MAX_PLY)
-      ss << "cp " << v * 100 / PawnValueEg;
+  if (abs(v) < VALUE_TB_WIN_IN_MAX_PLY)
+      ss << "cp " << UCI::to_cp(v);
+  else if (abs(v) < VALUE_MATE_IN_MAX_PLY)
+  {
+      const int ply = VALUE_MATE_IN_MAX_PLY - 1 - std::abs(v);  // recompute ss->ply
+      ss << "cp " << (v > 0 ? 20000 - ply : -20000 + ply);
+  }
   else
       ss << "mate " << (v > 0 ? VALUE_MATE - v + 1 : -VALUE_MATE - v) / 2;
 
@@ -350,14 +366,14 @@ std::string UCI::square(Square s) {
 
 string UCI::move(Move m, bool chess960) {
 
-  Square from = from_sq(m);
-  Square to = to_sq(m);
-
   if (m == MOVE_NONE)
       return "(none)";
 
   if (m == MOVE_NULL)
       return "0000";
+
+  Square from = from_sq(m);
+  Square to = to_sq(m);
 
   if (type_of(m) == CASTLING && !chess960)
       to = make_square(to > from ? FILE_G : FILE_C, rank_of(from));
